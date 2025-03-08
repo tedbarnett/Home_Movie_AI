@@ -76,7 +76,11 @@ def main():
         sys.exit(1)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    results_csv_filename = f"Scenes-{timestamp}.csv"
+    results_folder = "Results"
+    os.makedirs(results_folder, exist_ok=True)
+    results_csv_filename = os.path.join(results_folder, f"Scenes-{timestamp}.csv")
+
+    video_filename = os.path.basename(VIDEO_FILE)
 
     print(f"📹 Processing file: {VIDEO_FILE} ({os.path.getsize(VIDEO_FILE) / (1024 ** 2):.2f} MB)")
 
