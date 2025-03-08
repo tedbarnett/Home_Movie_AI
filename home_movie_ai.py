@@ -67,12 +67,12 @@ def main():
     start_time = time.time()
 
     if len(sys.argv) > 1:
-        VIDEO_FILE = sys.argv[1]
+        FOLDER_PATH = sys.argv[1]
     else:
-        VIDEO_FILE = input("Enter the filename to process (including extension, e.g., video.mp4): ")
+        FOLDER_PATH = input("Enter the folder path containing videos to process: ")
 
-    if not os.path.exists(VIDEO_FILE):
-        print(f"❌ Error: File '{VIDEO_FILE}' not found.")
+    if not os.path.exists(FOLDER_PATH):
+        print(f"❌ Error: Folder '{FOLDER_PATH}' not found.")
         sys.exit(1)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -80,44 +80,50 @@ def main():
     os.makedirs(results_folder, exist_ok=True)
     results_csv_filename = os.path.join(results_folder, f"Scenes-{timestamp}.csv")
 
-    video_filename = os.path.basename(VIDEO_FILE)
-
-    print(f"📹 Processing file: {VIDEO_FILE} ({os.path.getsize(VIDEO_FILE) / (1024 ** 2):.2f} MB)")
-
-    print("🔍 Detecting scenes...")
-    scenes = detect_scenes(VIDEO_FILE)
-    if not scenes:
-        print("⚠️ No scenes detected.")
+    video_files = [f for f in os.listdir(FOLDER_PATH) if f.lower().endswith(".mp4")]
+    if not video_files:
+        print("⚠️ No MP4 files found in the specified folder.")
         sys.exit(0)
 
-    print("🎧 Extracting audio...")
-    extract_audio(VIDEO_FILE, TEMP_AUDIO)
-
-    print("🗣️ Transcribing audio with Whisper...")
-    transcript_data = transcribe_audio(TEMP_AUDIO, WHISPER_MODEL)
-
-    os.remove(TEMP_AUDIO)
-
-    print("📝 Assigning transcripts to scenes and writing CSV...")
-    scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
-
-    video_filename = os.path.basename(VIDEO_FILE)
+    total_scenes = 0
+    total_words = 0
 
     with open(results_csv_filename, "w", newline="", encoding="utf-8") as csvfile:
         csv_writer = csv.writer(csvfile)
         csv_writer.writerow(["Filename", "Scene Number", "Start Time", "End Time", "Transcript"])
 
-        for idx, ((start, end), text) in enumerate(zip(scenes, scene_transcripts), 1):
-            csv_writer.writerow([video_filename, idx, format_time(start), format_time(end), text.strip()])
+        for video_file in video_files:
+            VIDEO_FILE = os.path.join(FOLDER_PATH, video_file)
+            file_start_time = time.time()
+            print(f"*** Processing file: {video_file}")
+
+            scenes = detect_scenes(VIDEO_FILE)
+            if not scenes:
+                print("- Results: 0 scenes, 0 words, 00:00 processing time")
+                continue
+
+            extract_audio(VIDEO_FILE, TEMP_AUDIO)
+            transcript_data = transcribe_audio(TEMP_AUDIO, WHISPER_MODEL)
+            os.remove(TEMP_AUDIO)
+
+            scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
+
+            for idx, ((start, end), text) in enumerate(zip(scenes, scene_transcripts), 1):
+                csv_writer.writerow([video_file, idx, format_time(start), format_time(end), text.strip()])
+
+            file_processing_time = time.time() - file_start_time
+            file_mins, file_secs = divmod(int(file_processing_time), 60)
+            file_words = sum(len(t.split()) for t in scene_transcripts)
+
+            print(f"- Results: {len(scenes)} scenes, {file_words} words, {file_mins:02d}:{file_secs:02d} processing time")
 
     total_processing_time = time.time() - start_time
     mins, secs = divmod(int(total_processing_time), 60)
-    total_words = sum(len(t.split()) for t in scene_transcripts)
 
-    print(f"✅ Processing complete. Results saved to '{results_csv_filename}'")
+    print(f"\n✅ All files processed. Results saved to '{results_csv_filename}'")
     print(f"Whisper model = {WHISPER_MODEL}")
     print(f"Total processing time: {mins:02d}:{secs:02d}")
-    print(f"Total # of scenes: {len(scenes)}")
+    print(f"Total # of scenes: {total_scenes}")
     print(f"Total # of words transcribed: {total_words}")
 
 if __name__ == "__main__":
