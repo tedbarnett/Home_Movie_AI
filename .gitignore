@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Virtual Environment
+home_movie_env/
+
+# VS Code
+.vscode/settings.json
+.vscode/*.code-workspace
+
 # C extensions
 *.so
 
