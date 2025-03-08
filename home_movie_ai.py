@@ -4,6 +4,8 @@ import subprocess
 import csv
 import sys
 import os
+import time
+from datetime import datetime
 from typing import List, Tuple
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
@@ -15,7 +17,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # torch.load future w
 
 # ----- Configuration -----
 TEMP_AUDIO = "temp_audio.wav"
-WHISPER_MODEL = "medium"  # Choose small, medium, or large based on accuracy/performance
+WHISPER_MODEL = "large"  # Choose small, medium, or large based on accuracy/performance
 
 # ----- Functions -----
 def format_time(seconds: float) -> str:
@@ -23,9 +25,6 @@ def format_time(seconds: float) -> str:
     return f"{mins}:{secs:02d}"
 
 def detect_scenes(video_path: str) -> List[Tuple[float, float]]:
-    from scenedetect import SceneManager
-    from scenedetect.detectors import ContentDetector
-
     video = open_video(video_path)
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector())
@@ -65,6 +64,8 @@ def assign_transcripts_to_scenes(transcript_data, scenes):
 
 # ----- Main Execution -----
 def main():
+    start_time = time.time()
+
     if len(sys.argv) > 1:
         VIDEO_FILE = sys.argv[1]
     else:
@@ -74,8 +75,8 @@ def main():
         print(f"❌ Error: File '{VIDEO_FILE}' not found.")
         sys.exit(1)
 
-    video_basename = os.path.splitext(os.path.basename(VIDEO_FILE))[0]
-    RESULTS_CSV = f"results-{video_basename}.csv"
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    results_csv_filename = f"Scenes-{timestamp}.csv"
 
     print(f"📹 Processing file: {VIDEO_FILE} ({os.path.getsize(VIDEO_FILE) / (1024 ** 2):.2f} MB)")
 
@@ -96,14 +97,24 @@ def main():
     print("📝 Assigning transcripts to scenes and writing CSV...")
     scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
 
-    with open(f"results-{os.path.splitext(VIDEO_FILE)[0]}.csv", "w", newline="", encoding="utf-8") as csvfile:
+    video_filename = os.path.basename(VIDEO_FILE)
+
+    with open(results_csv_filename, "w", newline="", encoding="utf-8") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["Scene Number", "Start Time", "End Time", "Transcript"])
+        csv_writer.writerow(["Filename", "Scene Number", "Start Time", "End Time", "Transcript"])
 
         for idx, ((start, end), text) in enumerate(zip(scenes, scene_transcripts), 1):
-            csv_writer.writerow([idx, format_time(start), format_time(end), text.strip()])
+            csv_writer.writerow([video_filename, idx, format_time(start), format_time(end), text.strip()])
 
-    print("✅ Processing complete.")
+    total_processing_time = time.time() - start_time
+    mins, secs = divmod(int(total_processing_time), 60)
+    total_words = sum(len(t.split()) for t in scene_transcripts)
+
+    print(f"✅ Processing complete. Results saved to '{results_csv_filename}'")
+    print(f"Whisper model = {WHISPER_MODEL}")
+    print(f"Total processing time: {mins:02d}:{secs:02d}")
+    print(f"Total # of scenes: {len(scenes)}")
+    print(f"Total # of words transcribed: {total_words}")
 
 if __name__ == "__main__":
     main()
