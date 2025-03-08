@@ -6,6 +6,9 @@ __pycache__/
 # Virtual Environment
 home_movie_env/
 
+# Results folder
+Results/
+
 # VS Code
 .vscode/settings.json
 .vscode/*.code-workspace
