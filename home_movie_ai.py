@@ -18,6 +18,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # torch.load future w
 # ----- Configuration -----
 TEMP_AUDIO = "temp_audio.wav"
 WHISPER_MODEL = "large"  # Choose small, medium, or large based on accuracy/performance
+model = whisper.load_model(WHISPER_MODEL)
+
+VIDEO_EXTENSIONS = (".mp4", ".wmv", ".mov", ".3gp", ".m4v")
 
 # ----- Functions -----
 def format_time(seconds: float) -> str:
@@ -28,11 +31,15 @@ def detect_scenes(video_path: str) -> List[Tuple[float, float]]:
     video = open_video(video_path)
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector())
-
     scene_manager.detect_scenes(video)
-    scene_list = scene_manager.get_scene_list()
 
-    timestamps = [(start.get_seconds(), end.get_seconds()) for start, end in scene_list]
+    scenes = scene_manager.get_scene_list()
+
+    if not scenes:
+        video_duration = video.duration.get_seconds()
+        return [(0.0, video_duration)]
+
+    timestamps = [(scene[0].get_seconds(), scene[1].get_seconds()) for scene in scenes]
     return timestamps
 
 def extract_audio(video_path: str, audio_path: str) -> None:
@@ -42,10 +49,8 @@ def extract_audio(video_path: str, audio_path: str) -> None:
         print(f"❌ ffmpeg error: {result.stderr}")
         sys.exit(1)
 
-def transcribe_audio(audio_path: str, model: str):
-    whisper_model = whisper.load_model(model, device="cuda")
-    result = whisper_model.transcribe(audio_path, word_timestamps=True)
-    return result
+def transcribe_audio(audio_path: str):
+    return model.transcribe(audio_path, fp16=True)
 
 def assign_transcripts_to_scenes(transcript_data, scenes):
     scene_transcripts = ['' for _ in scenes]
@@ -62,7 +67,11 @@ def assign_transcripts_to_scenes(transcript_data, scenes):
 
     return scene_transcripts
 
-# ----- Main Execution -----
+# Format timestamps nicely
+def format_time(seconds: float) -> str:
+    mins, secs = divmod(int(seconds), 60)
+    return f"{mins}:{secs:02d}"
+
 def main():
     start_time = time.time()
 
@@ -75,14 +84,15 @@ def main():
         print(f"❌ Error: Folder '{FOLDER_PATH}' not found.")
         sys.exit(1)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_folder = "Results"
     os.makedirs(results_folder, exist_ok=True)
     results_csv_filename = os.path.join(results_folder, f"Scenes-{timestamp}.csv")
 
-    video_files = [f for f in os.listdir(FOLDER_PATH) if f.lower().endswith(".mp4")]
+    video_files = [f for f in os.listdir(FOLDER_PATH) if f.lower().endswith(VIDEO_EXTENSIONS)]
+
     if not video_files:
-        print("⚠️ No MP4 files found in the specified folder.")
+        print("⚠️ No video files found in the specified folder.")
         sys.exit(0)
 
     total_scenes = 0
@@ -95,15 +105,11 @@ def main():
         for video_file in video_files:
             VIDEO_FILE = os.path.join(FOLDER_PATH, video_file)
             file_start_time = time.time()
-            print(f"*** Processing file: {video_file}")
+            print(f"Processing file: {video_file}")
 
             scenes = detect_scenes(VIDEO_FILE)
-            if not scenes:
-                print("- Results: 0 scenes, 0 words, 00:00 processing time")
-                continue
-
             extract_audio(VIDEO_FILE, TEMP_AUDIO)
-            transcript_data = transcribe_audio(TEMP_AUDIO, WHISPER_MODEL)
+            transcript_data = model.transcribe(TEMP_AUDIO)
             os.remove(TEMP_AUDIO)
 
             scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
@@ -114,6 +120,9 @@ def main():
             file_processing_time = time.time() - file_start_time
             file_mins, file_secs = divmod(int(file_processing_time), 60)
             file_words = sum(len(t.split()) for t in scene_transcripts)
+
+            total_scenes += len(scenes)
+            total_words += file_words
 
             print(f"- Results: {len(scenes)} scenes, {file_words} words, {file_mins:02d}:{file_secs:02d} processing time")
 
