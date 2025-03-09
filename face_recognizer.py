@@ -1,6 +1,3 @@
-# 03/08/2025: Transcripts working perfectly, for all video types
-# 03/09/2025: Starting on face recognition
-
 import warnings
 import whisper
 import subprocess
@@ -9,10 +6,16 @@ import sys
 import os
 import time
 import logging
+import face_recognition
+import cv2
+import pickle
+import configparser  # Add this import
 from datetime import datetime
 from typing import List, Tuple
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
+from sklearn.cluster import DBSCAN
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,6 +31,80 @@ WHISPER_MODEL = "large"  # Choose small, medium, or large based on accuracy/perf
 model = whisper.load_model(WHISPER_MODEL)
 
 VIDEO_EXTENSIONS = (".mp4", ".wmv", ".mov", ".3gp", ".m4v")
+ENCODINGS_PATH = os.path.join('setup', 'encodings.pickle')
+
+# Read configuration from setup/config.ini
+config = configparser.ConfigParser()
+config.read('setup/config.ini')
+
+VIDEO_PATH = config['DEFAULT']['VIDEO_PATH']
+OUTPUT_CSV = config['DEFAULT']['OUTPUT_CSV']
+FORCE_REBUILD_ENCODINGS = config['DEFAULT'].getboolean('FORCE_REBUILD_ENCODINGS', False)
+
+# Load known face encodings
+def load_known_faces(encodings_path: str):
+    with open(encodings_path, 'rb') as f:
+        data = pickle.load(f)
+        return data["encodings"], data["names"]
+
+# Function to create encodings.pickle
+def create_encodings_pickle():
+    print("Updating image encodings.pickle")
+    all_encodings = []
+    all_names = []
+
+    for root, _, files in os.walk('known_faces'):
+        for filename in files:
+            if filename.endswith((".jpg", ".jpeg", ".png")):
+                image_path = os.path.join(root, filename)
+                print(f"Processing {filename}...")
+                image = face_recognition.load_image_file(image_path)
+                encodings = face_recognition.face_encodings(image)
+                if encodings:
+                    encoding = encodings[0]
+                    name = os.path.splitext(filename)[0]
+                    all_encodings.append(encoding)
+                    all_names.append(name)
+
+    # Cluster the encodings to group similar faces
+    encodings_array = np.array(all_encodings)
+    clustering = DBSCAN(eps=0.6, min_samples=1, metric='euclidean').fit(encodings_array)
+    unique_encodings = []
+    unique_names = []
+
+    for cluster_id in set(clustering.labels_):
+        cluster_indices = np.where(clustering.labels_ == cluster_id)[0]
+        unique_encodings.append(all_encodings[cluster_indices[0]])
+        unique_names.append(all_names[cluster_indices[0]])
+
+    data = {"encodings": unique_encodings, "names": unique_names}
+    with open(ENCODINGS_PATH, 'wb') as f:
+        pickle.dump(data, f)
+
+# Check if any files in the known_faces folder are newer than encodings.pickle
+def check_and_update_encodings():
+    if FORCE_REBUILD_ENCODINGS:
+        create_encodings_pickle()
+        return
+
+    if not os.path.exists(ENCODINGS_PATH):
+        create_encodings_pickle()
+        return
+
+    encodings_mtime = os.path.getmtime(ENCODINGS_PATH)
+    for root, _, files in os.walk('known_faces'):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            if os.path.getmtime(file_path) > encodings_mtime:
+                create_encodings_pickle()
+                return
+
+# Run the check and update encodings if necessary
+check_and_update_encodings()
+
+# Load known face encodings
+known_encodings, known_names = load_known_faces(ENCODINGS_PATH)
+logging.info(f"Loaded {len(known_encodings)} unique known faces.")
 
 # ----- Functions -----
 def format_time(seconds: float) -> str:
@@ -85,6 +162,22 @@ def assign_transcripts_to_scenes(transcript_data, scenes):
 
     return scene_transcripts
 
+def recognize_faces_in_scene(frame, known_encodings, known_names):
+    """Recognize faces in a given frame."""
+    rgb_frame = frame[:, :, ::-1]  # Convert BGR to RGB
+    face_locations = face_recognition.face_locations(rgb_frame)
+    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+    recognized_names = set()
+    for face_encoding in face_encodings:
+        matches = face_recognition.compare_faces(known_encodings, face_encoding)
+        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+        best_match_index = np.argmin(face_distances)
+        if matches[best_match_index]:
+            recognized_names.add(known_names[best_match_index])
+
+    return recognized_names
+
 def main():
     start_time = time.time()
 
@@ -115,7 +208,7 @@ def main():
 
     with open(results_csv_filename, "w", newline="", encoding="utf-8") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["Filename", "Scene Number", "Start Time", "End Time", "Transcript"])
+        csv_writer.writerow(["Filename", "Scene Number", "Start Time", "End Time", "Transcript", "Recognized Faces"])
 
         for video_file in video_files:
             VIDEO_FILE = os.path.join(FOLDER_PATH, video_file)
@@ -133,8 +226,22 @@ def main():
                 logging.warning(f"No audio stream in '{video_file}'. Skipping transcription.")
                 scene_transcripts = ["[No audio]" for _ in scenes]
 
+            # Open video with OpenCV
+            video_capture = cv2.VideoCapture(VIDEO_FILE)
+            fps = video_capture.get(cv2.CAP_PROP_FPS)
+
             for idx, ((start, end), text) in enumerate(zip(scenes, scene_transcripts), 1):
-                csv_writer.writerow([video_file, idx, format_time(start), format_time(end), text.strip()])
+                mid_frame_no = int(((start + end) / 2) * fps)
+                video_capture.set(cv2.CAP_PROP_POS_FRAMES, mid_frame_no)
+                success, frame = video_capture.read()
+
+                if success:
+                    recognized_names = recognize_faces_in_scene(frame, known_encodings, known_names)
+                    csv_writer.writerow([video_file, idx, format_time(start), format_time(end), text.strip(), ", ".join(recognized_names)])
+                else:
+                    csv_writer.writerow([video_file, idx, format_time(start), format_time(end), text.strip(), ""])
+
+            video_capture.release()
 
             file_processing_time = time.time() - file_start_time
             file_mins, file_secs = divmod(int(file_processing_time), 60)
