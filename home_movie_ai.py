@@ -42,6 +42,11 @@ def detect_scenes(video_path: str) -> List[Tuple[float, float]]:
     timestamps = [(scene[0].get_seconds(), scene[1].get_seconds()) for scene in scenes]
     return timestamps
 
+def video_has_audio(video_path: str) -> bool:
+    cmd = f'ffprobe -i "{video_path}" -show_streams -select_streams a -loglevel error'
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    return bool(result.stdout.strip())
+
 def extract_audio(video_path: str, audio_path: str) -> None:
     command = f'ffmpeg -y -i "{video_path}" -q:a 0 -map a "{audio_path}"'
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -66,11 +71,6 @@ def assign_transcripts_to_scenes(transcript_data, scenes):
                 break
 
     return scene_transcripts
-
-# Format timestamps nicely
-def format_time(seconds: float) -> str:
-    mins, secs = divmod(int(seconds), 60)
-    return f"{mins}:{secs:02d}"
 
 def main():
     start_time = time.time()
@@ -108,11 +108,15 @@ def main():
             print(f"Processing file: {video_file}")
 
             scenes = detect_scenes(VIDEO_FILE)
-            extract_audio(VIDEO_FILE, TEMP_AUDIO)
-            transcript_data = model.transcribe(TEMP_AUDIO)
-            os.remove(TEMP_AUDIO)
 
-            scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
+            if video_has_audio(VIDEO_FILE):
+                extract_audio(VIDEO_FILE, TEMP_AUDIO)
+                transcript_data = transcribe_audio(TEMP_AUDIO)
+                os.remove(TEMP_AUDIO)
+                scene_transcripts = assign_transcripts_to_scenes(transcript_data, scenes)
+            else:
+                print(f"⚠️ Warning: No audio stream in '{video_file}'. Skipping transcription.")
+                scene_transcripts = ["[No audio]" for _ in scenes]
 
             for idx, ((start, end), text) in enumerate(zip(scenes, scene_transcripts), 1):
                 csv_writer.writerow([video_file, idx, format_time(start), format_time(end), text.strip()])
