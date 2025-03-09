@@ -1,3 +1,5 @@
+# 03/08/2025: Transcripts working perfectly, for all video types
+
 import warnings
 import whisper
 import subprocess
