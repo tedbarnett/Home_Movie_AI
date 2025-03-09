@@ -1,4 +1,5 @@
 # 03/08/2025: Transcripts working perfectly, for all video types
+# 03/09/2025: Starting on face recognition
 
 import warnings
 import whisper

@@ -8,6 +8,7 @@ home_movie_env/
 
 # Results folder
 Results/
+temp*.*
 
 # VS Code
 .vscode/settings.json
