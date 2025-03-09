@@ -6,8 +6,10 @@ __pycache__/
 # Virtual Environment
 home_movie_env/
 
-# Results folder
+# Private local data
 Results/
+known_faces/
+encodings.pickle
 temp*.*
 
 # VS Code
